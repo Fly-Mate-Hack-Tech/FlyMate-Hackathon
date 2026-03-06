@@ -1,19 +1,66 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Camera, X } from 'lucide-react';
+import { Camera, X, AlertCircle } from 'lucide-react';
+import { Html5QrcodeScanner, Html5QrcodeScanType } from 'html5-qrcode';
+import { ORADEA_NODES } from '../data/OradeaMapGraph';
 
 const QRScannerMock = () => {
     const navigate = useNavigate();
+    const [scanError, setScanError] = useState('');
+    const [hasStarted, setHasStarted] = useState(false); // To prevent multiple inits in strict mode
 
     useEffect(() => {
-        // Simulate reading a QR code located at the airport entrance
-        const timer = setTimeout(() => {
-            // Pass the node ID representing the physical location of the scanned QR code
-            navigate('/map?scanned=true&origin=entrance');
-        }, 2000);
+        // We only want to initialize the scanner once
+        if (hasStarted) return;
 
-        return () => clearTimeout(timer);
-    }, [navigate]);
+        // Optional config for the scanner
+        const config = {
+            fps: 10,
+            qrbox: { width: 250, height: 250 },
+            aspectRatio: 1.0,
+            supportedScanTypes: [Html5QrcodeScanType.SCAN_TYPE_CAMERA],
+            rememberLastUsedCamera: true
+        };
+
+        // The ID "reader" matches the div below
+        const html5QrcodeScanner = new Html5QrcodeScanner("reader", config, false);
+
+        const onScanSuccess = (decodedText) => {
+            // Clear scanner on success
+            html5QrcodeScanner.clear().catch(error => {
+                console.error("Failed to clear html5QrcodeScanner. ", error);
+            });
+
+            console.log("Scanned:", decodedText);
+
+            // Check if the scanned text corresponds to one of our Oradea Airport nodes
+            const scannedId = decodedText.trim().toLowerCase();
+
+            // If the node exists in our graph, route to it.
+            if (ORADEA_NODES[scannedId]) {
+                navigate(`/map?scanned=true&origin=${scannedId}`);
+            } else {
+                // Fallback if they scan a random QR: assume Entrance for the hackathon context
+                console.warn(`Node ${scannedId} not found. Defaulting to Entrance.`);
+                navigate('/map?scanned=true&origin=entrance');
+            }
+        };
+
+        const onScanFailure = (error) => {
+            // Ignore routine scan failures (when it's just looking for a code and doesn't see one yet)
+            // Only log or show major errors
+        };
+
+        html5QrcodeScanner.render(onScanSuccess, onScanFailure);
+        setHasStarted(true);
+
+        // Cleanup when component unmounts
+        return () => {
+            html5QrcodeScanner.clear().catch(error => {
+                console.error("Failed to clear html5QrcodeScanner on unmount. ", error);
+            });
+        };
+    }, [hasStarted, navigate]);
 
     return (
         <div style={{
@@ -23,14 +70,16 @@ const QRScannerMock = () => {
             backgroundColor: '#000',
             color: 'white',
             position: 'relative',
+            minHeight: '100vh',
             overflow: 'hidden'
         }} className="animate-fade-in">
 
-            {/* Header controls */}
+            {/* Header controls overlay */}
             <div style={{
                 position: 'absolute',
                 top: 0, left: 0, right: 0,
                 padding: '1.5rem',
+                paddingTop: '3rem',
                 display: 'flex',
                 justifyContent: 'space-between',
                 alignItems: 'center',
@@ -61,68 +110,81 @@ const QRScannerMock = () => {
                     alignItems: 'center',
                     gap: '0.5rem'
                 }}>
-                    <Camera size={16} /> scanning...
+                    <Camera size={16} /> Live Scanner
                 </div>
             </div>
 
-            {/* Simulated Camera View / Alignment Frame */}
+            {/* Scanner Container */}
             <div style={{
                 flex: 1,
                 display: 'flex',
+                flexDirection: 'column',
                 alignItems: 'center',
                 justifyContent: 'center',
-                padding: '2rem'
+                padding: '1rem',
+                position: 'relative',
+                zIndex: 1
             }}>
-                <div style={{
-                    position: 'relative',
-                    width: '280px',
-                    height: '280px',
-                    border: '2px solid rgba(255,255,255,0.2)',
-                    borderRadius: '24px',
-                    boxShadow: '0 0 0 100vmax rgba(0,0,0,0.7)', /* Darkens everything outside this box */
-                    overflow: 'hidden'
-                }}>
-                    {/* Corner indicators */}
-                    <div style={{ position: 'absolute', top: '-2px', left: '-2px', width: '40px', height: '40px', borderTop: '4px solid var(--primary)', borderLeft: '4px solid var(--primary)', borderTopLeftRadius: '24px' }} />
-                    <div style={{ position: 'absolute', top: '-2px', right: '-2px', width: '40px', height: '40px', borderTop: '4px solid var(--primary)', borderRight: '4px solid var(--primary)', borderTopRightRadius: '24px' }} />
-                    <div style={{ position: 'absolute', bottom: '-2px', left: '-2px', width: '40px', height: '40px', borderBottom: '4px solid var(--primary)', borderLeft: '4px solid var(--primary)', borderBottomLeftRadius: '24px' }} />
-                    <div style={{ position: 'absolute', bottom: '-2px', right: '-2px', width: '40px', height: '40px', borderBottom: '4px solid var(--primary)', borderRight: '4px solid var(--primary)', borderBottomRightRadius: '24px' }} />
-
-                    {/* Scanning Line Animation */}
-                    <div style={{
-                        position: 'absolute',
-                        left: 0,
-                        right: 0,
-                        height: '2px',
-                        backgroundColor: 'var(--primary)',
-                        boxShadow: '0 0 10px 2px var(--primary)',
-                        animation: 'scanline 2s linear infinite'
-                    }} />
-
-                    {/* Subtle pulsating center hint */}
-                    <div style={{
-                        position: 'absolute',
-                        top: '50%', left: '50%',
-                        transform: 'translate(-50%, -50%)',
-                        width: '80px', height: '80px',
-                        border: '2px dashed rgba(255,255,255,0.3)',
-                        borderRadius: '50%',
-                        animation: 'pulse 1.5s ease-in-out infinite'
-
-                    }} />
-                </div>
+                <div
+                    id="reader"
+                    style={{
+                        width: '100%',
+                        maxWidth: '400px',
+                        backgroundColor: '#111', // Dark background while loading
+                        borderRadius: '24px',
+                        overflow: 'hidden',
+                        boxShadow: '0 0 0 100vmax rgba(0,0,0,0.7)',
+                        border: '2px solid rgba(255,255,255,0.2)'
+                    }}
+                />
             </div>
 
-            {/* Instructional text */}
+            {/* Global CSS overrides required for html5-qrcode inner elements to look decent in dark mode */}
+            <style>{`
+          #reader {
+              border: none !important;
+          }
+          #reader select {
+              background: #333;
+              color: white;
+              padding: 5px;
+              border-radius: 8px;
+              border: 1px solid #555;
+              margin-bottom: 10px;
+          }
+          #reader button {
+              background: var(--primary);
+              color: white;
+              border: none;
+              padding: 8px 16px;
+              border-radius: 8px;
+              font-weight: 500;
+              cursor: pointer;
+              margin: 5px;
+          }
+          #reader__dashboard_section_csr span {
+              color: white !important;
+          }
+          #reader__dashboard_section_swaplink {
+              color: var(--primary) !important;
+              text-decoration: none;
+          }
+           #reader__status_span {
+              color: var(--text-muted) !important;
+          }
+      `}</style>
+
+            {/* Instructional text footer */}
             <div style={{
                 position: 'absolute',
-                bottom: '10%',
+                bottom: '2rem',
                 left: 0, right: 0,
                 textAlign: 'center',
-                padding: '0 2rem'
+                padding: '0 2rem',
+                zIndex: 10
             }}>
                 <h3 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '0.5rem' }}>Scan Wall Location QR</h3>
-                <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Locate a FlyMate QR point in the terminal</p>
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Grant camera access and scan any FlyMate QR code</p>
             </div>
 
         </div>
